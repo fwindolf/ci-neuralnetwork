@@ -4,16 +4,16 @@
 #include <math.h>
 
 // Hyperparameters
-#define LAYERS 5
+#define LAYERS 2
 #define INPUT_UNITS 2 // includes 1 bias
 #define OUTPUT_UNITS 1
-int UNITS[LAYERS] = {INPUT_UNITS, 20, 10, 4, OUTPUT_UNITS};
-#define LEARNING_RATE 0.001
+int UNITS[LAYERS] = {INPUT_UNITS, OUTPUT_UNITS};
+#define LEARNING_RATE 0.0001
 #define MOMENTUM 0.9
 #define MAX_CYCLES 100000
 
 
-#define DEBUG 1
+#define DEBUG 0
 #define DEBUG_LEVEL 1 // 0: All, 1: Info
 #define output(...)                \
     if (!DEBUG || DEBUG_LEVEL > 0) \
@@ -157,7 +157,7 @@ struct network *create_network()
     return n;
 }
 
-double activation_function(double x, int derived)
+/*double activation_function(double x, int derived)
 {
     if (derived)
     {        
@@ -166,6 +166,18 @@ double activation_function(double x, int derived)
     else
     {     
         return 1.7159 * tanh((2.0/3) * x);
+    }
+}*/
+
+double activation_function(double x, int derived)
+{
+    if (derived)
+    {        
+        return 1;
+    }
+    else
+    {     
+        return x;
     }
 }
 
@@ -235,6 +247,16 @@ double mean_in(struct data **d, int d_len, int idx)
     return sum/d_len;
 }
 
+double variance_in(struct data **d, int d_len, int idx, double mean)
+{
+    double sum = 0.0;
+    for (int i = 0; i < d_len; i++)
+    {        
+        sum += sq(d[i]->in[idx] - mean);
+    }
+    return sum/d_len;
+}
+
 double * normalize_input(struct data **d, int d_len, struct data **c, int c_len)
 {
     double * norms = calloc(INPUT_UNITS - 1, sizeof(double));
@@ -247,6 +269,7 @@ double * normalize_input(struct data **d, int d_len, struct data **c, int c_len)
         all[i] = c[i - d_len];
         
     // Make zero mean
+    double means[INPUT_UNITS];
     for (int i = 0; i < INPUT_UNITS  - 1; i++)
     {
         double mean = mean_in(all, all_len, i);
@@ -259,6 +282,7 @@ double * normalize_input(struct data **d, int d_len, struct data **c, int c_len)
         {
             c[j]->in[i] -= mean;
         }
+        means[i] = mean;
     }
 
     // Normalize all Inputs to (-1, 1)
@@ -270,13 +294,28 @@ double * normalize_input(struct data **d, int d_len, struct data **c, int c_len)
         debug("Normalizing Input Channel %d with factor %.6lf\n", i, max);
         for (int j = 0; j < d_len; j++)
         {
-            d[j]->in[i] /= max;            
+            d[j]->in[i] /= max;
         }
         for (int j = 0; j < c_len; j++)
         {
             c[j]->in[i] /= max;
         }
-        norms[i] = max;
+    }
+
+
+    for (int i = 0; i < INPUT_UNITS  - 1; i++)
+    {
+        double variance = variance_in(all, all_len, i, means[i]);
+        debug("Normalizing Input Channel %d with variance %.6lf\n", i, variance);
+        for (int j = 0; j < d_len; j++)
+        {
+            d[j]->in[i] /= variance;            
+        }
+        for (int j = 0; j < c_len; j++)
+        {
+            c[j]->in[i] /= variance;
+        }
+        norms[i] = variance;
     }
     free(all);
     return norms;
@@ -502,7 +541,7 @@ void train_network(struct network *n, struct data **d, int d_len)
 {
     for (int i = 0; i < d_len; i++)
     {
-        debug("Training with data %.6lf, %.6lf - %.6lf\n", d[i]->in[0], d[i]->in[1], d[i]->out[0]);
+        debug("Training with data %.6lf - %.6lf\n", d[i]->in[0], d[i]->out[0]);
         // Set input and propagate forward
         set_input(n, d[i]);
         // Start forwards propagation
@@ -557,10 +596,10 @@ int main(void)
 
     // Calculate the inital Error
     double t_error, v_error, v_last_error;
-    v_last_error = v_error = calculate_network_error(network, validation, v_len);
+    v_error = calculate_network_error(network, validation, v_len);
     int cycle = 0;
-    double stop_error = sq(0.003 * out_norms[0]) / d_len;   // 0,3% of the maximum output is tolerable
-    info("Stopping when error is below %.6lf\n", stop_error);
+    double stop_error = sq(0.001) / d_len;   // 0,3% of the maximum output is tolerable
+    info("Stopping when error is below %.16lf\n", stop_error);
     time_t start = time(NULL);
     while (1)
     {
@@ -568,10 +607,9 @@ int main(void)
         train_network(network, training, t_len);
         save_weights(network, v_error);
 
-        if ((time(NULL) - start) > 59 || v_error <= stop_error || v_last_error < v_error)
+        if ((time(NULL) - start) > 59 || v_error <= stop_error)
         {
-            restore_weights(network);
-            v_last_error = v_error;
+            restore_weights(network);            
             v_error = calculate_network_error(network, validation, v_len);
             t_error = calculate_network_error(network, training, t_len);
             info("Stopped: Validation: %.6lf, \tTraining: %.6lf\n", v_error, t_error);
